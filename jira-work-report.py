@@ -1,6 +1,4 @@
-import argparse
 import csv
-from bs4 import BeautifulSoup
 import os
 from jira.client import JIRA
 import time
@@ -13,6 +11,7 @@ from datetime import datetime as dt
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from requests import HTTPError
+import concurrent.futures
 
 AD_USER = getuser()
 
@@ -139,67 +138,106 @@ def update_sheet():
             print(f"Spreadsheet ID: {(response.get('spreadsheetId'))}")
         except HTTPError as error:
             print(f"An error occurred: {error}")
+    for sheet in sheet_metadata['sheets']:
+        if sheet['properties']['title'] == sheet_name:
+            sheet_id = sheet['properties']['sheetId']
+            break
+    requests = [
+        {
+            'updateCells': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 0,
+                    'startColumnIndex': 0
+                },
+                'rows': [{
+                    'values': [{'userEnteredValue': {'stringValue': cell}} for cell in row]
+                } for row in rows],
+                'fields': 'userEnteredValue'
+            }
+        },
+        {
+            'repeatCell': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': 1,
+                    'startColumnIndex': 0,
+                    'endColumnIndex': len(rows[0])
+                },
+                'cell': {
+                    'userEnteredFormat': {
+                        'textFormat': {
+                            'bold': True
+                        },
+                        'backgroundColor': {
+                            'red': 0.85,
+                            'green': 0.85,
+                            'blue': 0.85
+                        }
+                    }
+                },
+                'fields': 'userEnteredFormat(textFormat,backgroundColor)'
+            }
+        }
+    ]
 
-
-
-    range_name = f'{sheet_name}!A1:K{len(rows)}'
-    body = {
-        'range': range_name,
-        'values': rows,
-        'majorDimension': 'ROWS',
-    }
-    result = sheet.values().update(
+    service.spreadsheets().batchUpdate(
         spreadsheetId=SPREADSHEET_ID,
-        range=range_name,
-        valueInputOption='USER_ENTERED',
-        body=body,
+        body={'requests': requests}
     ).execute()
-    
-
 
     
+
+def process_jira(jira_id):
+    meta_jira=jira.issue(jira_id).raw["fields"]
+    meta = []
+    meta.append(jira_id)
+    meta.append(meta_jira["summary"])
+    meta.append(meta_jira["components"][0]["name"] if meta_jira.get("components") else None)
+    meta.append(meta_jira["assignee"]["displayName"] if meta_jira.get("assignee") else None)
+    meta.append(meta_jira["reporter"]["displayName"] if meta_jira.get("reporter") else None)
+    meta.append(meta_jira["status"]["name"] if meta_jira.get("status") else None)
+    meta.append(meta_jira["resolution"] if meta_jira.get("resolution") else None)
+    meta.append(meta_jira["created"] if meta_jira.get("created") else None)
+    meta.append(meta_jira["updated"] if meta_jira.get("updated") else None)
+    meta.append(', '.join(meta_jira["customfield_13602"]) if isinstance(meta_jira.get("customfield_13602"), list) else meta_jira["customfield_13602"] if meta_jira.get("customfield_13602") else None)
+    
+    print(meta)
+
+    csv_path = Path.cwd().joinpath(CSV_FILE_PATH)
+    try:
+        csv_size = os.stat(csv_path).st_size
+    except:
+        csv_size = 0
+
+    if csv_size == 0:
+        with open(CSV_FILE_PATH, 'w') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['Key','Summary','Components','Assignee','Reporter','Status','Resolution','Created','Updated','Stack ID'])
+
+    df=pd.read_csv(CSV_FILE_PATH, usecols=["Key"])
+    jira_key = df.Key.tolist()
+    if jira_id not in jira_key:
+        write_csv(jira_id, meta)
+    else:
+        write_csv(jira_id, meta, True)
 
 def main():
-    
     find_TO()
     global CSV_FILE_PATH
-    
     CSV_FILE_PATH = "jira-work-report_" + custom_strftime('{S}_%b', dt.now()) + ".csv"
 
-    for JIRA_ID in JIRA_IDS:
-        meta_jira=jira.issue(JIRA_ID).raw["fields"]
-        meta = []
-        meta.append(JIRA_ID)
-        meta.append(meta_jira["summary"])
-        meta.append(meta_jira["components"][0]["name"] if meta_jira.get("components") else None)
-        meta.append(meta_jira["assignee"]["displayName"] if meta_jira.get("assignee") else None)
-        meta.append(meta_jira["reporter"]["displayName"] if meta_jira.get("reporter") else None)
-        meta.append(meta_jira["status"]["name"] if meta_jira.get("status") else None)
-        meta.append(meta_jira["resolution"] if meta_jira.get("resolution") else None)
-        meta.append(meta_jira["created"] if meta_jira.get("created") else None)
-        meta.append(meta_jira["updated"] if meta_jira.get("updated") else None)
-        meta.append(', '.join(meta_jira["customfield_13602"]) if isinstance(meta_jira.get("customfield_13602"), list) else meta_jira["customfield_13602"] if meta_jira.get("customfield_13602") else None)
-
-        
-        print(meta)
-
-    
-        csv_path = Path.cwd().joinpath(CSV_FILE_PATH)
-        try: csv_size = os.stat(csv_path).st_size
-        except: csv_size = 0
-        
-        if csv_size == 0:
-            with open(CSV_FILE_PATH, 'w') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(['Key','Summary','Components','Assignee','Reporter','Status','Resolution','Created','Updated','Stack ID']) # 'Issue Type',
-
-        df=pd.read_csv(CSV_FILE_PATH, usecols=["Key"])
-        jira_key = df.Key.tolist()
-        if JIRA_ID not in jira_key:
-            write_csv(JIRA_ID, meta)
-        else:
-            write_csv(JIRA_ID, meta, True)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_jira_id = {executor.submit(process_jira, jira_id): jira_id for jira_id in JIRA_IDS}
+        for future in concurrent.futures.as_completed(future_to_jira_id):
+            jira_id = future_to_jira_id[future]
+            try:
+                _ = future.result()
+            except Exception as exc:
+                print(f'JIRA ID {jira_id} generated an exception: {exc}')
     
     update_sheet()
+
 
 main()
