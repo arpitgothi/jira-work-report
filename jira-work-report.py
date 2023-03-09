@@ -1,4 +1,5 @@
 import csv
+import io
 import os
 from jira.client import JIRA
 import time
@@ -17,7 +18,7 @@ AD_USER = getuser()
 
 JIRA_IDS = []
 CSV_FILE_PATH = ""
-
+SPREADSHEET_ID = ""
 now = time.time()
 token_path = os.path.join("/Users", AD_USER, ".jira","token")
 try:
@@ -86,9 +87,8 @@ def write_csv(jira, data, update=False):
         with open(CSV_FILE_PATH, 'a') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(data)
-        
 
-def update_sheet():
+def update_sheet(sheet, sheet_id):
     rows = []
     if os.path.exists(CSV_FILE_PATH):
         with open(CSV_FILE_PATH, newline='') as csvfile:
@@ -96,52 +96,6 @@ def update_sheet():
             rows = list(reader)
 
 
-    sheet_name= custom_strftime('{S} %b', dt.now())
-    print(sheet_name)
-    
-    
-    SERVICE_ACCOUNT_FILE = 'keys.json'
-    SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-    # If modifying these scopes, delete the file token.json.
-
-    creds = None
-    creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-
-    # The ID and range of a sample spreadsheet.
-    SPREADSHEET_ID = '1_VWMNZmrXqTqvgZTnO43nPzafTEAZRHKd2-4DSnM35o'
-    service = build('sheets', 'v4', credentials=creds)
-    # Call the Sheets API
-    sheet = service.spreadsheets()
-
-    body = {
-        'requests': [{
-            'addSheet': {
-                'properties': {
-                    'title': sheet_name
-                }
-            }
-        }]
-    }
-    
-    # Check if the sheet already exists
-    try:
-        sheet_metadata = sheet.get(spreadsheetId=SPREADSHEET_ID).execute()
-        sheet_exists = any(sheet_name == sheet['properties']['title'] for sheet in sheet_metadata['sheets'])
-    except HTTPError as error:
-        print(f"An error occurred: {error}")
-        sheet_exists = False
-
-    if not sheet_exists:
-        # Create the sheet if it doesn't exist
-        try:
-            response = sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()
-            print(f"Spreadsheet ID: {(response.get('spreadsheetId'))}")
-        except HTTPError as error:
-            print(f"An error occurred: {error}")
-    for sheet in sheet_metadata['sheets']:
-        if sheet['properties']['title'] == sheet_name:
-            sheet_id = sheet['properties']['sheetId']
-            break
     requests = [
         {
             'updateCells': {
@@ -182,12 +136,12 @@ def update_sheet():
         }
     ]
 
-    service.spreadsheets().batchUpdate(
+    sheet.batchUpdate(
         spreadsheetId=SPREADSHEET_ID,
         body={'requests': requests}
     ).execute()
 
-    
+
 
 def process_jira(jira_id):
     meta_jira=jira.issue(jira_id).raw["fields"]
@@ -226,8 +180,76 @@ def process_jira(jira_id):
 def main():
     find_TO()
     global CSV_FILE_PATH
+    global SPREADSHEET_ID
+    
     CSV_FILE_PATH = "jira-work-report_" + custom_strftime('{S}_%b', dt.now()) + ".csv"
+    sheet_name = custom_strftime('{S} %b', dt.now())
+    
+    SERVICE_ACCOUNT_FILE = 'keys.json'
+    SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+    # If modifying these scopes, delete the file token.json.
 
+    creds = None
+    creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+    # The ID and range of a sample spreadsheet.
+    SPREADSHEET_ID = '1_VWMNZmrXqTqvgZTnO43nPzafTEAZRHKd2-4DSnM35o'
+    service = build('sheets', 'v4', credentials=creds)
+    sheet = service.spreadsheets()
+    
+    
+    # Check if the sheet already exists
+    try:
+        sheet_metadata = sheet.get(spreadsheetId=SPREADSHEET_ID).execute()
+        sheet_exists = any(sheet_name == sheet['properties']['title'] for sheet in sheet_metadata['sheets'])
+    except HTTPError as error:
+        print(f"An error occurred: {error}")
+        sheet_exists = False
+    body = {
+        'requests': [{
+            'addSheet': {
+                'properties': {
+                    'title': sheet_name
+                }
+            }
+        }]
+    }
+    
+    if not sheet_exists:
+        # Create the sheet if it doesn't exist
+        try:
+            response = sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()
+            print(f"Spreadsheet ID: {(response.get('spreadsheetId'))}")
+        except HTTPError as error:
+            print(f"An error occurred: {error}")
+    else:
+        # Download the data from the sheet
+        result = sheet.values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f'{sheet_name}!A1:ZZ'
+        ).execute()
+
+        # Save the data to a CSV file
+        rows = result.get('values', [])
+        if not rows:
+            print('No data found.')
+        else:
+            with io.open(CSV_FILE_PATH, 'w', encoding='utf-8', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                for row in rows:
+                    writer.writerow(row)
+    for sheet in sheet_metadata['sheets']:
+        print(sheet,sheet_name)
+        if sheet['properties']['title'] == sheet_name:
+            print(sheet['properties']['title'])
+            sheet_id = sheet['properties']['sheetId']
+            print(sheet_id)
+            break
+    print(sheet_id,"$(((((((((((((((((((((()))))))))))))))))))))))))))))$2")
+        
+    
+        
+    # Threading loop for checking jira meta
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_jira_id = {executor.submit(process_jira, jira_id): jira_id for jira_id in JIRA_IDS}
         for future in concurrent.futures.as_completed(future_to_jira_id):
@@ -237,7 +259,7 @@ def main():
             except Exception as exc:
                 print(f'JIRA ID {jira_id} generated an exception: {exc}')
     
-    update_sheet()
+    update_sheet(service.spreadsheets(), sheet_id)
 
 
 main()
