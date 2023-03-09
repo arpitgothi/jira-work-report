@@ -244,7 +244,7 @@ def main():
             break
         
     
-    print("Fetching details of TO Tickets")
+    print("############## Fetching details of TO Tickets ##############")
     # Threading loop for checking jira meta
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_jira_id = {executor.submit(process_jira, jira_id): jira_id for jira_id in JIRA_IDS}
