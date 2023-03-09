@@ -12,6 +12,7 @@ import pandas as pd
 from datetime import datetime as dt
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from requests import HTTPError
 
 AD_USER = getuser()
 
@@ -71,7 +72,7 @@ def write_csv(jira, data, update=False):
             'Resolution': data[6],
             'Created': data[7],
             'Updated': data[8],
-            'Stack ID': data[9][0],
+            'Stack ID': data[9],
         }
         
         df=pd.read_csv(CSV_FILE_PATH)
@@ -80,8 +81,6 @@ def write_csv(jira, data, update=False):
         # Update the matching row with the new data
         df.loc[matching_row_index] = updated_row_data
         df.to_csv(CSV_FILE_PATH, index=False)
-        
-        
 
 
     else:
@@ -101,33 +100,61 @@ def update_sheet():
     sheet_name= custom_strftime('{S} %b', dt.now())
     print(sheet_name)
     
-
-    # If modifying these scopes, delete the file token.json.
+    
     SERVICE_ACCOUNT_FILE = 'keys.json'
+    SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+    # If modifying these scopes, delete the file token.json.
 
     creds = None
-    creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes='https://www.googleapis.com/auth/spreadsheets')
+    creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 
     # The ID and range of a sample spreadsheet.
     SPREADSHEET_ID = '1_VWMNZmrXqTqvgZTnO43nPzafTEAZRHKd2-4DSnM35o'
     service = build('sheets', 'v4', credentials=creds)
     # Call the Sheets API
     sheet = service.spreadsheets()
-    # Change the following constants to match your own setup
+
+    body = {
+        'requests': [{
+            'addSheet': {
+                'properties': {
+                    'title': sheet_name
+                }
+            }
+        }]
+    }
     
-    
+    # Check if the sheet already exists
+    try:
+        sheet_metadata = sheet.get(spreadsheetId=SPREADSHEET_ID).execute()
+        sheet_exists = any(sheet_name == sheet['properties']['title'] for sheet in sheet_metadata['sheets'])
+    except HTTPError as error:
+        print(f"An error occurred: {error}")
+        sheet_exists = False
+
+    if not sheet_exists:
+        # Create the sheet if it doesn't exist
+        try:
+            response = sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()
+            print(f"Spreadsheet ID: {(response.get('spreadsheetId'))}")
+        except HTTPError as error:
+            print(f"An error occurred: {error}")
+
+
+
     range_name = f'{sheet_name}!A1:K{len(rows)}'
     body = {
         'range': range_name,
         'values': rows,
         'majorDimension': 'ROWS',
     }
-    result = service.spreadsheets().values().update(
+    result = sheet.values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=range_name,
         valueInputOption='USER_ENTERED',
         body=body,
     ).execute()
+    
 
 
     
@@ -136,11 +163,11 @@ def main():
     
     find_TO()
     global CSV_FILE_PATH
+    
     CSV_FILE_PATH = "jira-work-report_" + custom_strftime('{S}_%b', dt.now()) + ".csv"
 
     for JIRA_ID in JIRA_IDS:
         meta_jira=jira.issue(JIRA_ID).raw["fields"]
-        print(JIRA_ID)
         meta = []
         meta.append(JIRA_ID)
         meta.append(meta_jira["summary"])
@@ -151,7 +178,8 @@ def main():
         meta.append(meta_jira["resolution"] if meta_jira.get("resolution") else None)
         meta.append(meta_jira["created"] if meta_jira.get("created") else None)
         meta.append(meta_jira["updated"] if meta_jira.get("updated") else None)
-        meta.append(meta_jira["customfield_13602"] if meta_jira.get("customfield_13602") else None)
+        meta.append(', '.join(meta_jira["customfield_13602"]) if isinstance(meta_jira.get("customfield_13602"), list) else meta_jira["customfield_13602"] if meta_jira.get("customfield_13602") else None)
+
         
         print(meta)
 
@@ -171,5 +199,7 @@ def main():
             write_csv(JIRA_ID, meta)
         else:
             write_csv(JIRA_ID, meta, True)
+    
+    update_sheet()
 
 main()
