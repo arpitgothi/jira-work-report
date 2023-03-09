@@ -5,7 +5,6 @@ from jira.client import JIRA
 import time
 from pathlib import Path
 from getpass import getpass, getuser
-from urllib.parse import parse_qs, urlparse
 from jira.client import JIRA
 import pandas as pd
 from datetime import datetime as dt
@@ -30,7 +29,7 @@ if file_size != 0:
     f=open(token_path, "r")
     AD_TOKEN = f.read()
     f.close()
-    print("AD Token found!\n##########")
+    print("AD Token found!\n")
 else:
     print("AD Token")
     AD_TOKEN = getpass(prompt='Enter your AD_TOKEN: ', stream=None) 
@@ -244,7 +243,7 @@ def main():
             break
         
     
-    print("############## Fetching details of TO Tickets ##############")
+    print("############## Fetching details of TO Tickets ##############\n")
     # Threading loop for checking jira meta
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_jira_id = {executor.submit(process_jira, jira_id): jira_id for jira_id in JIRA_IDS}
