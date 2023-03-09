@@ -239,16 +239,12 @@ def main():
                 for row in rows:
                     writer.writerow(row)
     for sheet in sheet_metadata['sheets']:
-        print(sheet,sheet_name)
         if sheet['properties']['title'] == sheet_name:
-            print(sheet['properties']['title'])
             sheet_id = sheet['properties']['sheetId']
-            print(sheet_id)
             break
-    print(sheet_id,"$(((((((((((((((((((((()))))))))))))))))))))))))))))$2")
         
     
-        
+    print("Fetching details of TO Tickets")
     # Threading loop for checking jira meta
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_jira_id = {executor.submit(process_jira, jira_id): jira_id for jira_id in JIRA_IDS}
@@ -260,6 +256,7 @@ def main():
                 print(f'JIRA ID {jira_id} generated an exception: {exc}')
     
     update_sheet(service.spreadsheets(), sheet_id)
+    print(f"\n\nhttps://docs.google.com/spreadsheets/d/{SPREADSHEET_ID} is Updated with latest details")
 
 
 main()
