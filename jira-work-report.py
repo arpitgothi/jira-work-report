@@ -7,7 +7,7 @@ from pathlib import Path
 from getpass import getpass, getuser
 from jira.client import JIRA
 import pandas as pd
-from datetime import datetime as dt
+from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from requests import HTTPError
@@ -49,10 +49,15 @@ def suffix(d):
     return 'th' if 11<=d<=13 else {1:'st',2:'nd',3:'rd'}.get(d%10, 'th')
 
 def custom_strftime(format, t):
+    if t.time() < datetime.strptime('06:30:00', '%H:%M:%S').time():
+        # If the time is before 6:30 AM, use yesterday's date
+        t -= timedelta(days=1)
     return t.strftime(format).replace('{S}', str(t.day) + suffix(t.day))
 
 def find_TO():
-    query = 'project = "TO" AND filter=81746 AND issuetype = Change AND status = "NEEDS PRE-CHECK" OR status = Pre-Check AND "Change type[Dropdown]" = Impacting AND "Epic Link" = EMPTY AND component != termination'
+    # query = 'project = "TO" AND filter=81746 AND issuetype = Change AND status = "NEEDS PRE-CHECK" OR status = Pre-Check AND "Change type[Dropdown]" = Impacting AND "Epic Link" = EMPTY AND component != termination'
+    query = 'project = "TO" AND filter=81746 AND issuetype in standardIssueTypes() AND ("Cloud Environment" not in ("Gov Cloud", Fedramp) OR "Cloud Environment" is EMPTY) AND (resolution != Cancelled OR resolution is EMPTY) AND resolution = Unresolved AND status in ("NEEDS PRE-CHECK",Pre-Check) ORDER BY status DESC'
+
     issues = jira.search_issues(query)
     for issue in issues:
         JIRA_IDS.append(str(issue))
@@ -181,8 +186,8 @@ def main():
     global CSV_FILE_PATH
     global SPREADSHEET_ID
     
-    CSV_FILE_PATH = "jira-work-report_" + custom_strftime('{S}_%b', dt.now()) + ".csv"
-    sheet_name = custom_strftime('{S} %b', dt.now())
+    CSV_FILE_PATH = "jira-work-report_" + custom_strftime('{S}_%b', datetime.now()) + ".csv"
+    sheet_name = custom_strftime('{S} %b', datetime.now())
     
     SERVICE_ACCOUNT_FILE = 'keys.json'
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -254,6 +259,7 @@ def main():
             except Exception as exc:
                 print(f'JIRA ID {jira_id} generated an exception: {exc}')
     
+    # Update the sheet
     update_sheet(service.spreadsheets(), sheet_id)
     print(f"\n\nhttps://docs.google.com/spreadsheets/d/{SPREADSHEET_ID} is Updated with latest details")
 
